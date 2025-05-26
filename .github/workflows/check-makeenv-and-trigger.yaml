@@ -51,11 +51,6 @@ jobs:
             echo "No changes detected"
           fi
 
-      - name: Debug info
-        run: |
-          echo "Current SHA: $(cat $TEMP_SHA_PATH || echo 'Not found')"
-          echo "Previous SHA: $(cat $PREV_SHA_PATH || echo 'Not found')"
-
       - name: Cache new hash
         if: steps.compare.outputs.file_changed == 'true'
         uses: actions/cache/save@v4
@@ -66,20 +61,10 @@ jobs:
             makeenv-sha-${{ github.ref }}
             makeenv-sha-
 
-      - name: Update previous hash file
-        if: steps.compare.outputs.file_changed == 'true'
-        run: cp "$TEMP_SHA_PATH" "$PREV_SHA_PATH"
-
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.file_changed == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: Compile and Release Kernel
           token: ${{ secrets.GITHUB_TOKEN }}
-          inputs: '{"makeenv_sha": "$(cat $TEMP_SHA_PATH)"}'
-
-      - name: Notify on change
-        if: steps.compare.outputs.file_changed == 'true'
-        run: |
-          echo "Detected changes in make.env - triggered build workflow"
-          # 可以在这里添加Slack、Email等通知
+          # 已移除 inputs 参数
