@@ -2,31 +2,29 @@ name: Check make.env Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # 每两小时执行一次
+    - cron: '0 */2 * * *'  # 每两小时运行一次
   workflow_dispatch:
 
 jobs:
   check-and-trigger:
     runs-on: ubuntu-latest
     steps:
-      - name: Set URL and Temp Path
-        id: setup
+      - name: Set environment variables
         run: |
           echo "MAKEENV_URL=https://raw.githubusercontent.com/unifreq/openwrt_packit/0a8e64cd58d5641b6e58caed59c1ac9c79c7b23c/make.env" >> $GITHUB_ENV
           echo "TEMP_SHA_PATH=./current.sha" >> $GITHUB_ENV
           echo "PREV_SHA_PATH=./previous.sha" >> $GITHUB_ENV
 
-      - name: Download remote make.env
+      - name: Download make.env from remote
         run: |
           echo "Downloading make.env from $MAKEENV_URL"
-          if ! curl -fsSL "$MAKEENV_URL" -o make.env; then
-            echo "❌ Failed to download make.env"
-            exit 1
-          fi
+          curl -fsSL "$MAKEENV_URL" -o make.env
 
-      - name: Calculate SHA256 hash
+      - name: Calculate SHA256 of make.env
+        id: sha
         run: |
           sha256sum make.env | awk '{print $1}' > $TEMP_SHA_PATH
+          echo "sha=$(cat $TEMP_SHA_PATH)" >> $GITHUB_OUTPUT
           echo "✅ Current SHA: $(cat $TEMP_SHA_PATH)"
 
       - name: Restore previous SHA from cache
@@ -61,7 +59,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.TEMP_SHA_PATH }}
-          key: makeenv-sha-${{ github.ref }}
+          key: makeenv-sha-${{ github.ref }}-${{ steps.sha.outputs.sha }}
 
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.should_trigger_build == 'true'
