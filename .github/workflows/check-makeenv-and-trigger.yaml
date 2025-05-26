@@ -33,7 +33,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.PREV_SHA_PATH }}
-          key: makeenv-sha-${{ github.ref }}
+          key: makeenv-sha-${{ github.ref }}-${{ hashFiles('make.env') }}
           restore-keys: |
             makeenv-sha-${{ github.ref }}-
             makeenv-sha-
@@ -41,32 +41,37 @@ jobs:
       - name: Check for change
         id: compare
         run: |
-          # 初始化输出变量（使用正确格式）
-          echo "file_changed=false" >> $GITHUB_OUTPUT
+          # 设置默认值
+          echo "should_save_cache=true" >> $GITHUB_OUTPUT
+          echo "should_trigger_build=false" >> $GITHUB_OUTPUT
           
-          # 检查缓存状态（使用正确语法）
           if [ "${{ steps.cache-restore.outputs.cache-hit }}" != 'true' ]; then
-            echo "No cache found - first run, don't trigger build"
-            exit 0
+            echo "No cache found - first run"
+            echo "should_save_cache=true" >> $GITHUB_OUTPUT
           elif [ ! -f "$PREV_SHA_PATH" ]; then
-            echo "No previous SHA file - don't trigger build"
-            exit 0
+            echo "No previous SHA file"
+            echo "should_save_cache=true" >> $GITHUB_OUTPUT
           elif ! cmp -s "$PREV_SHA_PATH" "$TEMP_SHA_PATH"; then
             echo "SHA changed - triggering build"
-            echo "file_changed=true" >> $GITHUB_OUTPUT
+            echo "should_save_cache=true" >> $GITHUB_OUTPUT
+            echo "should_trigger_build=true" >> $GITHUB_OUTPUT
           else
             echo "No changes detected"
+            echo "should_save_cache=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Cache new hash
-        if: always() && steps.compare.outputs.file_changed == 'true'
+        if: steps.compare.outputs.should_save_cache == 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.TEMP_SHA_PATH }}
-          key: makeenv-sha-${{ github.ref }}-${{ github.run_number }}
+          key: makeenv-sha-${{ github.ref }}-${{ hashFiles('make.env') }}
+          restore-keys: |
+            makeenv-sha-${{ github.ref }}-
+            makeenv-sha-
 
       - name: Trigger kernel build workflow
-        if: steps.compare.outputs.file_changed == 'true'
+        if: steps.compare.outputs.should_trigger_build == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: Compile the kernel
