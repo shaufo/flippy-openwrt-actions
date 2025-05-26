@@ -14,38 +14,61 @@ jobs:
         run: |
           echo "MAKEENV_URL=https://raw.githubusercontent.com/unifreq/openwrt_packit/0a8e64cd58d5641b6e58caed59c1ac9c79c7b23c/make.env" >> $GITHUB_ENV
           echo "TEMP_SHA_PATH=./current.sha" >> $GITHUB_ENV
+          echo "PREV_SHA_PATH=./previous.sha" >> $GITHUB_ENV
 
       - name: Download remote make.env
-        run: curl -fsSL "$MAKEENV_URL" -o make.env
+        run: |
+          if ! curl -fsSL "$MAKEENV_URL" -o make.env; then
+            echo "Failed to download make.env"
+            exit 1
+          fi
 
       - name: Calculate hash
-        run: sha256sum make.env | awk '{print $1}' > $TEMP_SHA_PATH
+        run: |
+          sha256sum make.env | awk '{print $1}' > $TEMP_SHA_PATH
+          echo "Current SHA: $(cat $TEMP_SHA_PATH)"
 
       - name: Restore cached hash
         id: cache-restore
         uses: actions/cache/restore@v4
         with:
-          path: ./previous.sha
-          key: makeenv-sha
+          path: ${{ env.PREV_SHA_PATH }}
+          key: makeenv-sha-${{ github.ref }}
+          restore-keys: |
+            makeenv-sha-
 
       - name: Check for change
         id: compare
         run: |
           echo "file_changed=false" >> $GITHUB_OUTPUT
-          if [ ! -f previous.sha ]; then
-            echo "No previous SHA found."
+          if [ ! -f "$PREV_SHA_PATH" ]; then
+            echo "No previous SHA found - treating as change"
             echo "file_changed=true" >> $GITHUB_OUTPUT
-          elif ! cmp -s previous.sha current.sha; then
-            echo "SHA changed."
+          elif ! cmp -s "$PREV_SHA_PATH" "$TEMP_SHA_PATH"; then
+            echo "SHA changed - previous: $(cat $PREV_SHA_PATH), current: $(cat $TEMP_SHA_PATH)"
             echo "file_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "No changes detected"
           fi
+
+      - name: Debug info
+        run: |
+          echo "Current SHA: $(cat $TEMP_SHA_PATH || echo 'Not found')"
+          echo "Previous SHA: $(cat $PREV_SHA_PATH || echo 'Not found')"
 
       - name: Cache new hash
         if: steps.compare.outputs.file_changed == 'true'
         uses: actions/cache/save@v4
         with:
-          path: ./current.sha
-          key: makeenv-sha
+          path: ${{ env.TEMP_SHA_PATH }}
+          key: makeenv-sha-${{ github.ref }}-${{ github.run_number }}
+          restore-keys: |
+            makeenv-sha-${{ github.ref }}
+            makeenv-sha-
+
+      - name: Update previous hash file
+        if: steps.compare.outputs.file_changed == 'true'
+        run: cp "$TEMP_SHA_PATH" "$PREV_SHA_PATH"
 
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.file_changed == 'true'
@@ -53,7 +76,10 @@ jobs:
         with:
           workflow: Compile and Release Kernel
           token: ${{ secrets.GITHUB_TOKEN }}
+          inputs: '{"makeenv_sha": "$(cat $TEMP_SHA_PATH)"}'
 
-      - name: Post Restore cached hash
+      - name: Notify on change
         if: steps.compare.outputs.file_changed == 'true'
-        run: mv current.sha previous.sha
+        run: |
+          echo "Detected changes in make.env - triggered build workflow"
+          # 可以在这里添加Slack、Email等通知
