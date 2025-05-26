@@ -8,14 +8,16 @@ on:
 jobs:
   check-and-trigger:
     runs-on: ubuntu-latest
+    env:
+      MAKEENV_URL: https://raw.githubusercontent.com/unifreq/openwrt_packit/0a8e64cd58d5641b6e58caed59c1ac9c79c7b23c/make.env
+      TEMP_SHA_PATH: ./current.sha
+      ARTIFACT_DIR: .sha
+      PREV_SHA_PATH: .sha/previous.sha
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Set environment variables
-        run: |
-          echo "MAKEENV_URL=https://raw.githubusercontent.com/unifreq/openwrt_packit/0a8e64cd58d5641b6e58caed59c1ac9c79c7b23c/make.env" >> $GITHUB_ENV
-          echo "TEMP_SHA_PATH=./current.sha" >> $GITHUB_ENV
-          echo "ARTIFACT_DIR=.sha" >> $GITHUB_ENV
-          echo "PREV_SHA_PATH=.sha/previous.sha" >> $GITHUB_ENV
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Download make.env from remote
         run: |
@@ -32,21 +34,18 @@ jobs:
         run: mkdir -p $ARTIFACT_DIR
 
       - name: Try to download previous SHA artifact (with retry)
-  run: |
-    success=false
-    for i in {1..3}; do
-      echo "Attempt $i: Downloading makeenv-sha artifact..."
-      gh run download -n makeenv-sha -D $ARTIFACT_DIR && success=true && break
-      echo "Retrying in 10 seconds..."
-      sleep 10
-    done
-    if [ "$success" = false ]; then
-      echo "Warning: Still failed to download artifact. Assuming first run."
-    fi
-  continue-on-error: true
-  env:
-    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+        run: |
+          success=false
+          for i in {1..3}; do
+            echo "Attempt $i: Downloading makeenv-sha artifact..."
+            gh run download -n makeenv-sha -D $ARTIFACT_DIR && success=true && break
+            echo "Retrying in 10 seconds..."
+            sleep 10
+          done
+          if [ "$success" = false ]; then
+            echo "Warning: Still failed to download artifact. Assuming first run."
+          fi
+        continue-on-error: true
 
       - name: Compare SHA to detect changes
         id: compare
@@ -81,12 +80,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: makeenv-sha
-          path: .sha/previous.sha   # ✅ 直接指定文件，避免上传失败
+          path: $ARTIFACT_DIR/previous.sha
           retention-days: 7
 
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.should_trigger_build == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: Compile the kernel  # ⚠️ 请确认 workflow 名称
+          workflow: Compile the kernel  # ⚠️ 请确认目标 workflow 名称是否正确
           token: ${{ secrets.GITHUB_TOKEN }}
