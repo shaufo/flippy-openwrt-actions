@@ -2,8 +2,8 @@ name: Check make.env Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # 每小时运行一次
-  workflow_dispatch:     # 支持手动触发
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
 
 jobs:
   check-and-trigger:
@@ -34,32 +34,31 @@ jobs:
         with:
           path: ${{ env.PREV_SHA_PATH }}
           key: makeenv-sha-${{ github.ref }}
-          restore-keys: |
-            makeenv-sha-
 
       - name: Check for change
         id: compare
         run: |
+          # 初始化输出变量
           echo "file_changed=false" >> $GITHUB_OUTPUT
-          if [ ! -f "$PREV_SHA_PATH" ]; then
-            echo "No previous SHA found - treating as change"
-            echo "file_changed=true" >> $GITHUB_OUTPUT
+          
+          # 检查是否有缓存恢复
+          if [[ "$(steps.cache-restore.outputs.cache-hit)" != 'true' ]]; then
+            echo "No cache found - first run, don't trigger build"
+          elif [ ! -f "$PREV_SHA_PATH" ]; then
+            echo "No previous SHA file - don't trigger build"
           elif ! cmp -s "$PREV_SHA_PATH" "$TEMP_SHA_PATH"; then
-            echo "SHA changed - previous: $(cat $PREV_SHA_PATH), current: $(cat $TEMP_SHA_PATH)"
+            echo "SHA changed - triggering build"
             echo "file_changed=true" >> $GITHUB_OUTPUT
           else
             echo "No changes detected"
           fi
 
       - name: Cache new hash
-        if: steps.compare.outputs.file_changed == 'true'
+        if: steps.compare.outputs.file_changed == 'true' || steps.cache-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.TEMP_SHA_PATH }}
           key: makeenv-sha-${{ github.ref }}-${{ github.run_number }}
-          restore-keys: |
-            makeenv-sha-${{ github.ref }}
-            makeenv-sha-
 
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.file_changed == 'true'
@@ -67,4 +66,3 @@ jobs:
         with:
           workflow: Compile the kernel
           token: ${{ secrets.GITHUB_TOKEN }}
-          # 已移除 inputs 参数
