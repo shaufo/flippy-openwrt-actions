@@ -2,7 +2,7 @@ name: Check make.env Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 */2 * * *'  # 每两小时执行一次
   workflow_dispatch:
 
 jobs:
@@ -18,57 +18,50 @@ jobs:
 
       - name: Download remote make.env
         run: |
+          echo "Downloading make.env from $MAKEENV_URL"
           if ! curl -fsSL "$MAKEENV_URL" -o make.env; then
-            echo "Failed to download make.env"
+            echo "❌ Failed to download make.env"
             exit 1
           fi
 
-      - name: Calculate hash
+      - name: Calculate SHA256 hash
         run: |
           sha256sum make.env | awk '{print $1}' > $TEMP_SHA_PATH
-          echo "Current SHA: $(cat $TEMP_SHA_PATH)"
+          echo "✅ Current SHA: $(cat $TEMP_SHA_PATH)"
 
-      - name: Restore cached hash
+      - name: Restore previous SHA from cache
         id: cache-restore
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.PREV_SHA_PATH }}
-          key: makeenv-sha-${{ github.ref }}-${{ hashFiles('make.env') }}
+          key: makeenv-sha-${{ github.ref }}
           restore-keys: |
-            makeenv-sha-${{ github.ref }}-
             makeenv-sha-
 
-      - name: Check for change
+      - name: Compare SHA to detect changes
         id: compare
         run: |
-          # 设置默认值
-          echo "should_save_cache=true" >> $GITHUB_OUTPUT
+          echo "should_save_cache=false" >> $GITHUB_OUTPUT
           echo "should_trigger_build=false" >> $GITHUB_OUTPUT
-          
-          if [ "${{ steps.cache-restore.outputs.cache-hit }}" != 'true' ]; then
-            echo "No cache found - first run"
+
+          if [ ! -f "$PREV_SHA_PATH" ]; then
+            echo "⚠️ No previous SHA found."
             echo "should_save_cache=true" >> $GITHUB_OUTPUT
-          elif [ ! -f "$PREV_SHA_PATH" ]; then
-            echo "No previous SHA file"
-            echo "should_save_cache=true" >> $GITHUB_OUTPUT
+            echo "should_trigger_build=true" >> $GITHUB_OUTPUT
           elif ! cmp -s "$PREV_SHA_PATH" "$TEMP_SHA_PATH"; then
-            echo "SHA changed - triggering build"
+            echo "✅ SHA changed - triggering build"
             echo "should_save_cache=true" >> $GITHUB_OUTPUT
             echo "should_trigger_build=true" >> $GITHUB_OUTPUT
           else
-            echo "No changes detected"
-            echo "should_save_cache=false" >> $GITHUB_OUTPUT
+            echo "⏹ No changes detected in make.env"
           fi
 
-      - name: Cache new hash
+      - name: Save new SHA to cache
         if: steps.compare.outputs.should_save_cache == 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.TEMP_SHA_PATH }}
-          key: makeenv-sha-${{ github.ref }}-${{ hashFiles('make.env') }}
-          restore-keys: |
-            makeenv-sha-${{ github.ref }}-
-            makeenv-sha-
+          key: makeenv-sha-${{ github.ref }}
 
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.should_trigger_build == 'true'
