@@ -2,7 +2,7 @@ name: Check make.env Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小时执行一次
+    - cron: '0 * * * *'  # 每小时运行一次
   workflow_dispatch:     # 支持手动触发
 
 jobs:
@@ -10,54 +10,50 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Set URL and Temp Path
+        id: setup
         run: |
-          echo "FILE_URL=https://raw.githubusercontent.com/unifreq/openwrt_packit/0a8e64cd58d5641b6e58caed59c1ac9c79c7b23c/make.env" >> $GITHUB_ENV
-          echo "HASH_FILE=make.env.sha256" >> $GITHUB_ENV
+          echo "MAKEENV_URL=https://raw.githubusercontent.com/unifreq/openwrt_packit/0a8e64cd58d5641b6e58caed59c1ac9c79c7b23c/make.env" >> $GITHUB_ENV
+          echo "TEMP_SHA_PATH=./current.sha" >> $GITHUB_ENV
 
       - name: Download remote make.env
-        run: curl -fsSL "$FILE_URL" -o make.env
+        run: curl -fsSL "$MAKEENV_URL" -o make.env
 
       - name: Calculate hash
-        id: hash
-        run: |
-          sha256sum make.env | cut -d ' ' -f1 > current.sha
-          echo "current_sha=$(cat current.sha)" >> $GITHUB_OUTPUT
+        run: sha256sum make.env | awk '{print $1}' > $TEMP_SHA_PATH
 
       - name: Restore cached hash
-        id: cache
-        uses: actions/cache@v4
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
-          path: previous.sha
-          key: makeenv-sha-${{ github.run_id }}
-          restore-keys: |
-            makeenv-sha-
+          path: ./previous.sha
+          key: makeenv-sha
 
       - name: Check for change
         id: compare
         run: |
-          echo "File changed: false" >> $GITHUB_OUTPUT
+          echo "file_changed=false" >> $GITHUB_OUTPUT
           if [ ! -f previous.sha ]; then
             echo "No previous SHA found."
-            echo "File changed: true" >> $GITHUB_OUTPUT
+            echo "file_changed=true" >> $GITHUB_OUTPUT
           elif ! cmp -s previous.sha current.sha; then
             echo "SHA changed."
-            echo "File changed: true" >> $GITHUB_OUTPUT
+            echo "file_changed=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Cache new hash
-        if: steps.compare.outputs['File changed'] == 'true'
-        run: cp current.sha previous.sha
+        if: steps.compare.outputs.file_changed == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ./current.sha
+          key: makeenv-sha
 
       - name: Trigger kernel build workflow
-        if: steps.compare.outputs['File changed'] == 'true'
+        if: steps.compare.outputs.file_changed == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: Compile and Release Kernel
           token: ${{ secrets.GITHUB_TOKEN }}
-          inputs: |
-            {
-              "kernel_version": "6.6.y_6.12.y",
-              "kernel_source": "unifreq",
-              "kernel_toolchain": "gcc",
-              "kernel_sign": "-flippy"
-            }
+
+      - name: Post Restore cached hash
+        if: steps.compare.outputs.file_changed == 'true'
+        run: mv current.sha previous.sha
