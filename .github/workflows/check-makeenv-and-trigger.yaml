@@ -2,18 +2,20 @@ name: Check make.env Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # 每两小时运行一次
+    - cron: '0 */2 * * *'  # 每两小时检查一次
   workflow_dispatch:
 
 jobs:
   check-and-trigger:
     runs-on: ubuntu-latest
+
     steps:
       - name: Set environment variables
         run: |
           echo "MAKEENV_URL=https://raw.githubusercontent.com/unifreq/openwrt_packit/0a8e64cd58d5641b6e58caed59c1ac9c79c7b23c/make.env" >> $GITHUB_ENV
           echo "TEMP_SHA_PATH=./current.sha" >> $GITHUB_ENV
-          echo "PREV_SHA_PATH=./previous.sha" >> $GITHUB_ENV
+          echo "ARTIFACT_DIR=.sha" >> $GITHUB_ENV
+          echo "PREV_SHA_PATH=.sha/previous.sha" >> $GITHUB_ENV
 
       - name: Download make.env from remote
         run: |
@@ -24,42 +26,46 @@ jobs:
         id: sha
         run: |
           sha256sum make.env | awk '{print $1}' > $TEMP_SHA_PATH
-          echo "sha=$(cat $TEMP_SHA_PATH)" >> $GITHUB_OUTPUT
           echo "✅ Current SHA: $(cat $TEMP_SHA_PATH)"
 
-      - name: Restore previous SHA from cache
-        id: cache-restore
-        uses: actions/cache/restore@v4
+      - name: Prepare artifact directory
+        run: mkdir -p $ARTIFACT_DIR
+
+      - name: Download previous SHA artifact
+        uses: actions/download-artifact@v4
         with:
-          path: ${{ env.PREV_SHA_PATH }}
-          key: makeenv-sha-${{ github.ref }}
-          restore-keys: |
-            makeenv-sha-
+          name: makeenv-sha
+          path: ${{ env.ARTIFACT_DIR }}
+        continue-on-error: true
 
       - name: Compare SHA to detect changes
         id: compare
         run: |
-          echo "should_save_cache=false" >> $GITHUB_OUTPUT
+          echo "should_save_artifact=false" >> $GITHUB_OUTPUT
           echo "should_trigger_build=false" >> $GITHUB_OUTPUT
 
           if [ ! -f "$PREV_SHA_PATH" ]; then
-            echo "⚠️ No previous SHA found."
-            echo "should_save_cache=true" >> $GITHUB_OUTPUT
-            echo "should_trigger_build=true" >> $GITHUB_OUTPUT
+            echo "🆕 First run detected. Saving SHA only, not triggering build."
+            echo "should_save_artifact=true" >> $GITHUB_OUTPUT
           elif ! cmp -s "$PREV_SHA_PATH" "$TEMP_SHA_PATH"; then
             echo "✅ SHA changed - triggering build"
-            echo "should_save_cache=true" >> $GITHUB_OUTPUT
+            echo "should_save_artifact=true" >> $GITHUB_OUTPUT
             echo "should_trigger_build=true" >> $GITHUB_OUTPUT
           else
             echo "⏹ No changes detected in make.env"
           fi
 
-      - name: Save new SHA to cache
-        if: steps.compare.outputs.should_save_cache == 'true'
-        uses: actions/cache/save@v4
+      - name: Save current SHA as file
+        if: steps.compare.outputs.should_save_artifact == 'true'
+        run: cp $TEMP_SHA_PATH $ARTIFACT_DIR/previous.sha
+
+      - name: Upload new SHA artifact
+        if: steps.compare.outputs.should_save_artifact == 'true'
+        uses: actions/upload-artifact@v4
         with:
-          path: ${{ env.TEMP_SHA_PATH }}
-          key: makeenv-sha-${{ github.ref }}-${{ steps.sha.outputs.sha }}
+          name: makeenv-sha
+          path: ${{ env.ARTIFACT_DIR }}
+          retention-days: 7
 
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.should_trigger_build == 'true'
