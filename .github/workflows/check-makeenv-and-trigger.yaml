@@ -65,6 +65,6 @@ jobs:
         if: steps.compare.outputs.file_changed == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: Compile and Release Kernel
+          workflow: Compile the kernel
           token: ${{ secrets.GITHUB_TOKEN }}
           # 已移除 inputs 参数
