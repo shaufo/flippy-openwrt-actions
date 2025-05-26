@@ -176,6 +176,7 @@ jobs:
           replacesArtifacts: true
           token: ${{ secrets.GITHUB_TOKEN }}
           body: |
+            Flippy 系列固件打包专用内核，支持 Amlogic Allwinner Rockchip 平台
             The kernel can be used to compile Armbian and OpenWrt.
             The kernel source code comes from: ${{ inputs.kernel_source }}
             The kernel compilation toolchain: ${{ inputs.kernel_toolchain }}
