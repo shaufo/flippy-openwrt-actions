@@ -59,17 +59,24 @@ jobs:
         if: steps.compare.outputs.should_save_artifact == 'true'
         run: cp $TEMP_SHA_PATH $ARTIFACT_DIR/previous.sha
 
+      - name: Verify saved SHA content
+        if: steps.compare.outputs.should_save_artifact == 'true'
+        run: |
+          echo "📄 SHA written to artifact:"
+          cat $ARTIFACT_DIR/previous.sha
+          ls -l $ARTIFACT_DIR
+
       - name: Upload new SHA artifact
         if: steps.compare.outputs.should_save_artifact == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: makeenv-sha
-          path: ${{ env.ARTIFACT_DIR }}
+          path: .sha/previous.sha   # ✅ 直接指定文件，避免上传失败
           retention-days: 7
 
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.should_trigger_build == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: Compile the kernel
+          workflow: Compile the kernel  # ⚠️ 请确认 workflow 名称
           token: ${{ secrets.GITHUB_TOKEN }}
