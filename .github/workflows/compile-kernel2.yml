@@ -1,0 +1,138 @@
+# ==========================================================================
+# Compile, clean, and release kernel with dynamic version and full tar.gz upload
+# ==========================================================================
+
+name: Compile and Release Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: "Select kernel version"
+        required: false
+        default: "6.6.y_6.12.y"
+        type: choice
+        options:
+          - 5.4.y
+          - 5.10.y
+          - 5.15.y
+          - 6.1.y
+          - 6.6.y
+          - 6.12.y
+          - 6.6.y_6.12.y
+          - all
+      kernel_source:
+        description: "Kernel source"
+        required: false
+        default: "unifreq"
+        type: choice
+        options:
+          - unifreq
+          - codesnas
+      kernel_toolchain:
+        description: "Toolchain"
+        required: false
+        default: "gcc"
+        type: choice
+        options:
+          - clang
+          - gcc
+          - gcc-14.2
+      kernel_sign:
+        description: "Signature"
+        required: false
+        default: "-flippy"
+        type: choice
+        options:
+          - -ophub
+          - -flippy
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  compile:
+    runs-on: ubuntu-22.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clean old releases & workflows
+        uses: ophub/delete-releases-workflows@main
+        with:
+          delete_releases: true
+          delete_tags: true
+          prerelease_option: all
+          releases_keep_latest: 1
+          releases_keep_keyword: "kernel_"
+          delete_workflows: true
+          workflows_keep_day: 1
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Init environment
+        run: |
+          sudo timedatectl set-timezone "${TZ}"
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          sudo docker rmi $(docker images -q) 2>/dev/null || true
+          sudo apt-get update
+          sudo apt-get install -y $(curl -fsSL https://tinyurl.com/ubuntu2204-build-armbian)
+          sudo apt-get clean
+
+      - name: Mount build disk
+        run: |
+          sudo mkdir -p /builder/kernel /builder/output
+          echo "PACKAGED_OUTPUTPATH=/builder/output" >> $GITHUB_ENV
+          echo "PACKAGED_STATUS=success" >> $GITHUB_ENV
+
+      - name: Compile kernel
+        uses: ophub/amlogic-s9xxx-armbian@main
+        with:
+          build_target: kernel
+          kernel_source: ${{ inputs.kernel_source }}
+          kernel_version: ${{ inputs.kernel_version }}
+          kernel_auto: true
+          delete_source: true
+          kernel_package: all
+          kernel_sign: ${{ inputs.kernel_sign }}
+          kernel_toolchain: ${{ inputs.kernel_toolchain }}
+          compress_format: xz
+          silent_log: true
+
+      # ✅ 提取版本号并写入环境变量
+      - name: Extract kernel version
+        id: extract_ver
+        run: |
+          file=$(ls /builder/output/boot-*-flippy.tar.gz | head -n1)
+          version=$(basename "$file" | cut -d'-' -f2)
+          echo "KERNEL_VER=$version" >> $GITHUB_ENV
+          echo "KERNEL_TAG=kernel-v$version${{ inputs.kernel_sign }}" >> $GITHUB_ENV
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      # ✅ 生成 release body（含下载链接）
+      - name: Generate release notes
+        id: notes
+        run: |
+          tag=kernel-v${{ steps.extract_ver.outputs.version }}${{ inputs.kernel_sign }}
+          echo "RELEASE_BODY=✅ Kernel Build Completed%0A%0A🔧 Toolchain: ${{ inputs.kernel_toolchain }}%0A📦 Files:" >> $GITHUB_ENV
+          for f in $(ls /builder/output/*.tar.gz); do
+            fname=$(basename "$f")
+            echo "- [$fname](https://github.com/${{ github.repository }}/releases/download/$tag/$fname)" >> urls.txt
+          done
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo -e "✅ Kernel Build Completed\n\n🔧 Toolchain: ${{ inputs.kernel_toolchain }}\n📦 Files:\n$(cat urls.txt)" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      # ✅ 上传带版本号 tag 的 release，附全部 .tar.gz 文件
+      - name: Upload to GitHub Release
+        uses: ncipollo/release-action@main
+        with:
+          tag: ${{ env.KERNEL_TAG }}
+          name: ${{ env.KERNEL_TAG }}
+          body: ${{ env.RELEASE_BODY }}
+          artifacts: /builder/output/*.tar.gz
+          allowUpdates: true
+          removeArtifacts: false
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
