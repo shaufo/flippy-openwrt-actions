@@ -2,7 +2,7 @@ name: Check make.env Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+    - cron: '0 */2 * * *'  # 每小时运行一次
   workflow_dispatch:     # 支持手动触发
 
 jobs:
