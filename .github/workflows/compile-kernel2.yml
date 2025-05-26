@@ -49,6 +49,7 @@ on:
 
 env:
   TZ: Asia/Shanghai
+  OUTPUT_PATH: /home/runner/work/.actions/ophub/amlogic-s9xxx-armbian/main/complie-kernel/output
 
 jobs:
   compile:
@@ -82,8 +83,8 @@ jobs:
 
       - name: Mount build disk
         run: |
-          sudo mkdir -p /builder/kernel /builder/output
-          echo "PACKAGED_OUTPUTPATH=/builder/output" >> $GITHUB_ENV
+          sudo mkdir -p /builder/kernel ${{ env.OUTPUT_PATH }}
+          echo "PACKAGED_OUTPUTPATH=${{ env.OUTPUT_PATH }}" >> $GITHUB_ENV
           echo "PACKAGED_STATUS=success" >> $GITHUB_ENV
 
       - name: Compile kernel
@@ -100,23 +101,24 @@ jobs:
           compress_format: xz
           silent_log: true
 
-      # ✅ 提取版本号并写入环境变量
+      - name: Debug output files
+        run: ls -la ${{ env.OUTPUT_PATH }}
+
       - name: Extract kernel version
         id: extract_ver
         run: |
-          file=$(ls /builder/output/boot-*-flippy.tar.gz | head -n1)
+          file=$(ls ${{ env.OUTPUT_PATH }}/boot-[0-9]*.*-flippy.tar.gz | head -n1)
           version=$(basename "$file" | cut -d'-' -f2)
           echo "KERNEL_VER=$version" >> $GITHUB_ENV
           echo "KERNEL_TAG=kernel-v$version${{ inputs.kernel_sign }}" >> $GITHUB_ENV
           echo "version=$version" >> $GITHUB_OUTPUT
 
-      # ✅ 生成 release body（含下载链接）
       - name: Generate release notes
         id: notes
         run: |
-          tag=kernel-v${{ steps.extract_ver.outputs.version }}${{ inputs.kernel_sign }}
+          tag=${{ env.KERNEL_TAG }}
           echo "RELEASE_BODY=✅ Kernel Build Completed%0A%0A🔧 Toolchain: ${{ inputs.kernel_toolchain }}%0A📦 Files:" >> $GITHUB_ENV
-          for f in $(ls /builder/output/*.tar.gz); do
+          for f in $(ls ${{ env.OUTPUT_PATH }}/*.tar.gz); do
             fname=$(basename "$f")
             echo "- [$fname](https://github.com/${{ github.repository }}/releases/download/$tag/$fname)" >> urls.txt
           done
@@ -124,14 +126,13 @@ jobs:
           echo -e "✅ Kernel Build Completed\n\n🔧 Toolchain: ${{ inputs.kernel_toolchain }}\n📦 Files:\n$(cat urls.txt)" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      # ✅ 上传带版本号 tag 的 release，附全部 .tar.gz 文件
       - name: Upload to GitHub Release
         uses: ncipollo/release-action@main
         with:
           tag: ${{ env.KERNEL_TAG }}
           name: ${{ env.KERNEL_TAG }}
           body: ${{ env.RELEASE_BODY }}
-          artifacts: /builder/output/*.tar.gz
+          artifacts: ${{ env.OUTPUT_PATH }}/*.tar.gz
           allowUpdates: true
           removeArtifacts: false
           replacesArtifacts: true
