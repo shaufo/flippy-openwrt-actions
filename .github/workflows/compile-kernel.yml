@@ -62,7 +62,7 @@ on:
       kernel_toolchain:
         description: "Select the compilation toolchain"
         required: false
-        default: "gcc"
+        default: "clang"
         type: choice
         options:
           - clang
@@ -84,9 +84,9 @@ on:
         default: "-flippy"
         type: choice
         options:
-          - -ophub
           - -flippy
-
+          - -ophub
+          
 env:
   TZ: America/New_York
 
