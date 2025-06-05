@@ -1,101 +1,104 @@
-name: Check Kernel Makefile Changes and Trigger Build
+name: Check Makefile Changes and Trigger Build
 
 on:
   schedule:
     - cron: '0 */2 * * *'  # 每两小时检查一次
   workflow_dispatch:
 
+env:
+  FILE_612_URL: https://raw.githubusercontent.com/unifreq/linux-6.12.y/refs/heads/main/Makefile
+  FILE_66_URL: https://raw.githubusercontent.com/unifreq/linux-6.6.y/refs/heads/main/Makefile
+  FILE_612_NAME: Makefile_6.12
+  FILE_66_NAME: Makefile_6.6
+  SHA_DIR: .sha
+  TEMP_SHA_612: .sha/temp_612.sha
+  TEMP_SHA_66: .sha/temp_66.sha
+  PREV_SHA_612: .sha/previous_612.sha
+  PREV_SHA_66: .sha/previous_66.sha
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
-  check-and-trigger:
+  check-makefile:
     runs-on: ubuntu-latest
-    env:
-      FILE_612_URL: https://raw.githubusercontent.com/unifreq/linux-6.12.y/refs/heads/main/Makefile
-      FILE_66_URL: https://raw.githubusercontent.com/unifreq/linux-6.6.y/refs/heads/main/Makefile
-      FILE_612_NAME: Makefile_6.12
-      FILE_66_NAME: Makefile_6.6
-      SHA_DIR: .sha
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Download Makefiles
+      - name: 📥 Download Makefiles
         run: |
-          echo "📥 Downloading Makefiles..."
-          curl -fsSL "$FILE_612_URL" -o "$FILE_612_NAME"
-          curl -fsSL "$FILE_66_URL" -o "$FILE_66_NAME"
+          curl -fsSL "$FILE_612_URL" -o makefile_612
+          curl -fsSL "$FILE_66_URL" -o makefile_66
 
-      - name: Calculate SHA256 of Makefiles
+      - name: 🧮 Calculate SHA256
         run: |
-          mkdir -p "${{ env.SHA_DIR }}"
-          sha256sum "${{ env.FILE_612_NAME }}" | awk '{print $1}' > "${{ env.SHA_DIR }}/current_612.sha"
-          sha256sum "${{ env.FILE_66_NAME }}" | awk '{print $1}' > "${{ env.SHA_DIR }}/current_66.sha"
-          echo "✅ SHA 6.12: $(cat ${{ env.SHA_DIR }}/current_612.sha)"
-          echo "✅ SHA 6.6 : $(cat ${{ env.SHA_DIR }}/current_66.sha)"
+          mkdir -p "$SHA_DIR"
+          sha256sum makefile_612 | awk '{print $1}' > "$TEMP_SHA_612"
+          sha256sum makefile_66 | awk '{print $1}' > "$TEMP_SHA_66"
+          echo "✅ SHA 6.12: $(cat $TEMP_SHA_612)"
+          echo "✅ SHA 6.6 : $(cat $TEMP_SHA_66)"
 
-      - name: Download previous SHA artifacts (ignore errors)
+      - name: 📦 Download previous SHA artifacts (ignore errors)
+        run: |
+          mkdir -p "$SHA_DIR"
+          gh run download -n makefile-6.12-sha -D "$SHA_DIR" || echo "⚠️ No previous 6.12 SHA"
+          gh run download -n makefile-6.6-sha  -D "$SHA_DIR" || echo "⚠️ No previous 6.6 SHA"
+
+          # Rename downloaded files safely
+          if [ -f "$SHA_DIR/previous.sha" ]; then
+            mv "$SHA_DIR/previous.sha" "$PREV_SHA_612"
+          fi
+          if [ -f "$SHA_DIR/previous (1).sha" ]; then
+            mv "$SHA_DIR/previous (1).sha" "$PREV_SHA_66"
+          fi
         continue-on-error: true
-        run: |
-          mkdir -p "${{ env.SHA_DIR }}"
-          gh run download -n makefile-6.12-sha -D "${{ env.SHA_DIR }}" || echo "⚠️ No previous 6.12 SHA"
-          gh run download -n makefile-6.6-sha -D "${{ env.SHA_DIR }}" || echo "⚠️ No previous 6.6 SHA"
-          # Rename to match expected filenames
-          [ -f "${{ env.SHA_DIR }}/previous.sha" ] && mv "${{ env.SHA_DIR }}/previous.sha" "${{ env.SHA_DIR }}/previous_612.sha"
-          [ -f "${{ env.SHA_DIR }}/previous (1).sha" ] && mv "${{ env.SHA_DIR }}/previous (1).sha" "${{ env.SHA_DIR }}/previous_66.sha"
 
-      - name: Compare SHAs and decide whether to trigger build
+      - name: 🔍 Compare SHA values
         id: compare
         run: |
           echo "should_trigger_build=false" >> $GITHUB_OUTPUT
-          changed=false
+          echo "should_save_artifact_612=false" >> $GITHUB_OUTPUT
+          echo "should_save_artifact_66=false" >> $GITHUB_OUTPUT
 
-          if [ ! -f "${{ env.SHA_DIR }}/previous_612.sha" ]; then
-            echo "🆕 First run for 6.12"
-            mv "${{ env.SHA_DIR }}/current_612.sha" "${{ env.SHA_DIR }}/previous_612.sha"
-            changed=true
-          elif ! cmp -s "${{ env.SHA_DIR }}/previous_612.sha" "${{ env.SHA_DIR }}/current_612.sha"; then
-            echo "🔁 Detected change in 6.12"
-            mv "${{ env.SHA_DIR }}/current_612.sha" "${{ env.SHA_DIR }}/previous_612.sha"
-            changed=true
-          fi
-
-          if [ ! -f "${{ env.SHA_DIR }}/previous_66.sha" ]; then
-            echo "🆕 First run for 6.6"
-            mv "${{ env.SHA_DIR }}/current_66.sha" "${{ env.SHA_DIR }}/previous_66.sha"
-            changed=true
-          elif ! cmp -s "${{ env.SHA_DIR }}/previous_66.sha" "${{ env.SHA_DIR }}/current_66.sha"; then
-            echo "🔁 Detected change in 6.6"
-            mv "${{ env.SHA_DIR }}/current_66.sha" "${{ env.SHA_DIR }}/previous_66.sha"
-            changed=true
-          fi
-
-          if [ "$changed" = true ]; then
-            echo "✅ Build should be triggered"
+          if [ ! -f "$PREV_SHA_612" ] || ! cmp -s "$PREV_SHA_612" "$TEMP_SHA_612"; then
+            echo "📌 Change detected in $FILE_612_NAME"
             echo "should_trigger_build=true" >> $GITHUB_OUTPUT
-          else
-            echo "⏹ No changes detected"
+            echo "should_save_artifact_612=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload SHA for 6.12
-        if: always()
+          if [ ! -f "$PREV_SHA_66" ] || ! cmp -s "$PREV_SHA_66" "$TEMP_SHA_66"; then
+            echo "📌 Change detected in $FILE_66_NAME"
+            echo "should_trigger_build=true" >> $GITHUB_OUTPUT
+            echo "should_save_artifact_66=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 💾 Save latest SHA for 6.12
+        if: steps.compare.outputs.should_save_artifact_612 == 'true'
+        run: cp "$TEMP_SHA_612" "$PREV_SHA_612"
+
+      - name: 💾 Save latest SHA for 6.6
+        if: steps.compare.outputs.should_save_artifact_66 == 'true'
+        run: cp "$TEMP_SHA_66" "$PREV_SHA_66"
+
+      - name: 📤 Upload SHA artifact 6.12
+        if: steps.compare.outputs.should_save_artifact_612 == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: makefile-6.12-sha
-          path: ${{ env.SHA_DIR }}/previous_612.sha
+          path: ${{ env.PREV_SHA_612 }}
           retention-days: 7
 
-      - name: Upload SHA for 6.6
-        if: always()
+      - name: 📤 Upload SHA artifact 6.6
+        if: steps.compare.outputs.should_save_artifact_66 == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: makefile-6.6-sha
-          path: ${{ env.SHA_DIR }}/previous_66.sha
+          path: ${{ env.PREV_SHA_66 }}
           retention-days: 7
 
-      - name: Trigger kernel build workflow
+      - name: 🚀 Trigger kernel build workflow
         if: steps.compare.outputs.should_trigger_build == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: Compile the kernel  # ✅ 请确认名称是否匹配
+          workflow: Compile the kernel  # ⚠️ 请确认目标 workflow 名称是否正确
           token: ${{ secrets.GITHUB_TOKEN }}
