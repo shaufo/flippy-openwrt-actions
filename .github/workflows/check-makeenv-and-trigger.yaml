@@ -23,76 +23,79 @@ jobs:
       - name: Download Makefiles
         run: |
           echo "📥 Downloading Makefiles..."
-          curl -fsSL "$FILE_612_URL" -o $FILE_612_NAME
-          curl -fsSL "$FILE_66_URL" -o $FILE_66_NAME
+          curl -fsSL "$FILE_612_URL" -o "$FILE_612_NAME"
+          curl -fsSL "$FILE_66_URL" -o "$FILE_66_NAME"
 
       - name: Calculate SHA256 of Makefiles
         run: |
-          mkdir -p $SHA_DIR
-          sha256sum $FILE_612_NAME | awk '{print $1}' > $SHA_DIR/current_612.sha
-          sha256sum $FILE_66_NAME | awk '{print $1}' > $SHA_DIR/current_66.sha
-          echo "✅ SHA 6.12: $(cat $SHA_DIR/current_612.sha)"
-          echo "✅ SHA 6.6 : $(cat $SHA_DIR/current_66.sha)"
+          mkdir -p "${{ env.SHA_DIR }}"
+          sha256sum "${{ env.FILE_612_NAME }}" | awk '{print $1}' > "${{ env.SHA_DIR }}/current_612.sha"
+          sha256sum "${{ env.FILE_66_NAME }}" | awk '{print $1}' > "${{ env.SHA_DIR }}/current_66.sha"
+          echo "✅ SHA 6.12: $(cat ${{ env.SHA_DIR }}/current_612.sha)"
+          echo "✅ SHA 6.6 : $(cat ${{ env.SHA_DIR }}/current_66.sha)"
 
-      - name: Download previous SHA artifacts
+      - name: Download previous SHA artifacts (ignore errors)
         continue-on-error: true
         run: |
-          mkdir -p $SHA_DIR
-          for name in makefile-6.12-sha makefile-6.6-sha; do
-            echo "⬇️ Attempting to download $name"
-            gh run download -n $name -D $SHA_DIR || echo "⚠️ $name not found"
-          done
+          mkdir -p "${{ env.SHA_DIR }}"
+          gh run download -n makefile-6.12-sha -D "${{ env.SHA_DIR }}" || echo "⚠️ No previous 6.12 SHA"
+          gh run download -n makefile-6.6-sha -D "${{ env.SHA_DIR }}" || echo "⚠️ No previous 6.6 SHA"
+          # Rename to match expected filenames
+          [ -f "${{ env.SHA_DIR }}/previous.sha" ] && mv "${{ env.SHA_DIR }}/previous.sha" "${{ env.SHA_DIR }}/previous_612.sha"
+          [ -f "${{ env.SHA_DIR }}/previous (1).sha" ] && mv "${{ env.SHA_DIR }}/previous (1).sha" "${{ env.SHA_DIR }}/previous_66.sha"
 
-      - name: Compare SHAs and set output
+      - name: Compare SHAs and decide whether to trigger build
         id: compare
         run: |
           echo "should_trigger_build=false" >> $GITHUB_OUTPUT
           changed=false
 
-          if [ ! -f "$SHA_DIR/previous_612.sha" ]; then
+          if [ ! -f "${{ env.SHA_DIR }}/previous_612.sha" ]; then
             echo "🆕 First run for 6.12"
-            mv "$SHA_DIR/current_612.sha" "$SHA_DIR/previous_612.sha"
+            mv "${{ env.SHA_DIR }}/current_612.sha" "${{ env.SHA_DIR }}/previous_612.sha"
             changed=true
-          elif ! cmp -s "$SHA_DIR/previous_612.sha" "$SHA_DIR/current_612.sha"; then
+          elif ! cmp -s "${{ env.SHA_DIR }}/previous_612.sha" "${{ env.SHA_DIR }}/current_612.sha"; then
             echo "🔁 Detected change in 6.12"
-            mv "$SHA_DIR/current_612.sha" "$SHA_DIR/previous_612.sha"
+            mv "${{ env.SHA_DIR }}/current_612.sha" "${{ env.SHA_DIR }}/previous_612.sha"
             changed=true
           fi
 
-          if [ ! -f "$SHA_DIR/previous_66.sha" ]; then
+          if [ ! -f "${{ env.SHA_DIR }}/previous_66.sha" ]; then
             echo "🆕 First run for 6.6"
-            mv "$SHA_DIR/current_66.sha" "$SHA_DIR/previous_66.sha"
+            mv "${{ env.SHA_DIR }}/current_66.sha" "${{ env.SHA_DIR }}/previous_66.sha"
             changed=true
-          elif ! cmp -s "$SHA_DIR/previous_66.sha" "$SHA_DIR/current_66.sha"; then
+          elif ! cmp -s "${{ env.SHA_DIR }}/previous_66.sha" "${{ env.SHA_DIR }}/current_66.sha"; then
             echo "🔁 Detected change in 6.6"
-            mv "$SHA_DIR/current_66.sha" "$SHA_DIR/previous_66.sha"
+            mv "${{ env.SHA_DIR }}/current_66.sha" "${{ env.SHA_DIR }}/previous_66.sha"
             changed=true
           fi
 
           if [ "$changed" = true ]; then
-            echo "✅ Triggering build"
+            echo "✅ Build should be triggered"
             echo "should_trigger_build=true" >> $GITHUB_OUTPUT
           else
-            echo "⏹ No changes in monitored files"
+            echo "⏹ No changes detected"
           fi
 
-      - name: Upload new SHA artifacts
+      - name: Upload SHA for 6.12
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: makefile-6.12-sha
-          path: $SHA_DIR/previous_612.sha
+          path: ${{ env.SHA_DIR }}/previous_612.sha
           retention-days: 7
 
-      - name: Upload new SHA artifacts
+      - name: Upload SHA for 6.6
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: makefile-6.6-sha
-          path: $SHA_DIR/previous_66.sha
+          path: ${{ env.SHA_DIR }}/previous_66.sha
           retention-days: 7
 
       - name: Trigger kernel build workflow
         if: steps.compare.outputs.should_trigger_build == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: Compile the kernel  # ⚠️ 请确认目标 workflow 名称是否完全匹配
+          workflow: Compile the kernel  # ✅ 请确认名称是否匹配
           token: ${{ secrets.GITHUB_TOKEN }}
