@@ -180,3 +180,11 @@ jobs:
             The kernel can be used to compile Armbian and OpenWrt.
             The kernel source code comes from: ${{ inputs.kernel_source }}
             The kernel compilation toolchain: ${{ inputs.kernel_toolchain }}
+
+      - name: Telegram notification
+        run: |
+          MSG="
+          kernel_version: ${{ inputs.kernel_version }}
+          编译完成
+          "
+          curl "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" -d "chat_id=${{ secrets.TELEGRAM_TO }}&text=${MSG}"
