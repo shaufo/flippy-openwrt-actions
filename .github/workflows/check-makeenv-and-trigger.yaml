@@ -1,4 +1,4 @@
-name: Check Makefile Changes and Trigger Build (Git Commit Cache)
+name: Check Makefile Changes and Trigger Build
 
 on:
   schedule:
@@ -16,7 +16,7 @@ jobs:
       - name: Checkout repository with full history
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # 需要完整历史方便提交和推送
+          fetch-depth: 0
 
       - name: Download Makefiles
         run: |
@@ -27,40 +27,16 @@ jobs:
         run: |
           sha256sum makefile_612 | awk '{print $1}' > sha_6.12.txt
           sha256sum makefile_66 | awk '{print $1}' > sha_6.6.txt
-
           echo "New SHA 6.12: $(cat sha_6.12.txt)"
           echo "New SHA 6.6 : $(cat sha_6.6.txt)"
 
-      - name: Compare with committed SHA files
-        id: compare
-        run: |
-          changed=false
-
-          if ! cmp -s sha_6.12.txt sha_6.12.txt.orig 2>/dev/null; then
-            echo "SHA 6.12 changed"
-            changed=true
-          else
-            echo "SHA 6.12 unchanged"
-          fi
-
-          if ! cmp -s sha_6.6.txt sha_6.6.txt.orig 2>/dev/null; then
-            echo "SHA 6.6 changed"
-            changed=true
-          else
-            echo "SHA 6.6 unchanged"
-          fi
-
-          echo "changed=$changed" >> $GITHUB_OUTPUT
-        # 这里先备份原文件，供对比
-        # 先复制仓库里已有 sha 文件到 .orig 方便比较
       - name: Prepare original SHA files for comparison
         run: |
           cp sha_6.12.txt sha_6.12.txt.orig || true
           cp sha_6.6.txt sha_6.6.txt.orig || true
 
-      # 改成先备份后比较：
-      - name: Compare SHA files (run after Prepare)
-        id: compare
+      - name: Compare SHA files
+        id: compare_orig
         run: |
           changed=false
 
@@ -81,12 +57,9 @@ jobs:
           echo "changed=$changed" >> $GITHUB_OUTPUT
 
       - name: Update SHA files and commit if changed
-        if: steps.compare.outputs.changed == 'true'
+        if: steps.compare_orig.outputs.changed == 'true'
         run: |
-          mv sha_6.12.txt sha_6.12.txt.orig || true
-          mv sha_6.6.txt sha_6.6.txt.orig || true
-
-          # 把新计算的 SHA 覆盖到仓库对应文件
+          # 用最新计算结果覆盖仓库文件
           mv sha_6.12.txt sha_6.12.txt.tmp
           mv sha_6.6.txt sha_6.6.txt.tmp
           mv sha_6.12.txt.tmp sha_6.12.txt
@@ -102,7 +75,7 @@ jobs:
           git push
 
       - name: Trigger kernel build workflow
-        if: steps.compare.outputs.changed == 'true'
+        if: steps.compare_orig.outputs.changed == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: Compile the kernel
