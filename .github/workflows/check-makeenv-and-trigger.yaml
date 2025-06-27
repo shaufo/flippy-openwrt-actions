@@ -8,24 +8,18 @@ on:
 env:
   FILE_612_URL: https://raw.githubusercontent.com/unifreq/linux-6.12.y/main/Makefile
   FILE_66_URL: https://raw.githubusercontent.com/unifreq/linux-6.6.y/main/Makefile
-  SHA_DIR: .sha
-  SHA_FILE_612: .sha/Makefile_6.12.sha
-  SHA_FILE_66: .sha/Makefile_6.6.sha
-  SHA_CACHE_DIR: /tmp/sha-cache
-  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   check-makefile:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📦 Checkout main branch
-        uses: actions/checkout@v3
-
-      - name: 🔧 Set global Git identity
-        run: |
-          git config --global user.email "github-actions@github.com"
-          git config --global user.name "github-actions"
+      - name: 📥 Download previous SHA artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: makefile-sha
+          path: ./prev-sha
+        continue-on-error: true  # 第一次运行可能无 artifact，忽略错误
 
       - name: 📥 Download Makefiles
         run: |
@@ -34,74 +28,41 @@ jobs:
 
       - name: 🧮 Calculate SHA256
         run: |
-          mkdir -p "$SHA_DIR"
-          sha256sum makefile_612 | awk '{print $1}' > "$SHA_FILE_612"
-          sha256sum makefile_66 | awk '{print $1}' > "$SHA_FILE_66"
-          echo "✅ SHA 6.12: $(cat $SHA_FILE_612)"
-          echo "✅ SHA 6.6 : $(cat $SHA_FILE_66)"
+          sha256sum makefile_612 | awk '{print $1}' > sha_6.12.txt
+          sha256sum makefile_66 | awk '{print $1}' > sha_6.6.txt
 
-      - name: 🧰 Init or checkout `sha-cache` branch to temp dir
-        run: |
-          mkdir -p "$SHA_CACHE_DIR"
+          echo "New SHA 6.12: $(cat sha_6.12.txt)"
+          echo "New SHA 6.6 : $(cat sha_6.6.txt)"
 
-          # 检查是否已有远程 sha-cache 分支
-          git ls-remote --exit-code --heads origin sha-cache
-          REMOTE_EXISTS=$?
-
-          if [ "$REMOTE_EXISTS" -ne 0 ]; then
-            echo "🆕 sha-cache branch not found remotely, creating..."
-            git switch --detach
-            git checkout --orphan sha-cache
-            git reset --hard
-            git config user.email "github-actions@github.com"
-            git config user.name "github-actions"
-            git commit --allow-empty -m "Init sha-cache branch"
-            git push origin sha-cache
-            git switch -
-          fi
-
-          # 添加 worktree
-          git fetch origin sha-cache
-          git worktree add "$SHA_CACHE_DIR" origin/sha-cache
+          echo "Prev SHA 6.12: $(cat ./prev-sha/sha_6.12.txt || echo 'none')"
+          echo "Prev SHA 6.6 : $(cat ./prev-sha/sha_6.6.txt || echo 'none')"
 
       - name: 🔍 Compare SHA values
         id: compare
         run: |
-          echo "should_trigger_build=false" >> $GITHUB_OUTPUT
-          echo "should_update_612=false" >> $GITHUB_OUTPUT
-          echo "should_update_66=false" >> $GITHUB_OUTPUT
-
-          if [ ! -f $SHA_CACHE_DIR/Makefile_6.12.sha ] || ! cmp -s "$SHA_FILE_612" "$SHA_CACHE_DIR/Makefile_6.12.sha"; then
-            echo "📌 Change detected in 6.12"
-            echo "should_trigger_build=true" >> $GITHUB_OUTPUT
-            echo "should_update_612=true" >> $GITHUB_OUTPUT
+          changed=false
+          if [ ! -f ./prev-sha/sha_6.12.txt ] || ! cmp -s sha_6.12.txt ./prev-sha/sha_6.12.txt; then
+            echo "6.12 changed"
+            changed=true
+          fi
+          if [ ! -f ./prev-sha/sha_6.6.txt ] || ! cmp -s sha_6.6.txt ./prev-sha/sha_6.6.txt; then
+            echo "6.6 changed"
+            changed=true
           fi
 
-          if [ ! -f $SHA_CACHE_DIR/Makefile_6.6.sha ] || ! cmp -s "$SHA_FILE_66" "$SHA_CACHE_DIR/Makefile_6.6.sha"; then
-            echo "📌 Change detected in 6.6"
-            echo "should_trigger_build=true" >> $GITHUB_OUTPUT
-            echo "should_update_66=true" >> $GITHUB_OUTPUT
-          fi
+          echo "changed=$changed" >> $GITHUB_OUTPUT
 
-      - name: 💾 Update SHA cache
-        if: steps.compare.outputs.should_trigger_build == 'true'
-        run: |
-          if [ "${{ steps.compare.outputs.should_update_612 }}" = "true" ]; then
-            cp "$SHA_FILE_612" "$SHA_CACHE_DIR/Makefile_6.12.sha"
-          fi
-          if [ "${{ steps.compare.outputs.should_update_66 }}" = "true" ]; then
-            cp "$SHA_FILE_66" "$SHA_CACHE_DIR/Makefile_6.6.sha"
-          fi
-
-          cd "$SHA_CACHE_DIR"
-          git config user.email "github-actions@github.com"
-          git config user.name "github-actions"
-          git add *.sha
-          git commit -m "Update SHA on $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || echo "No changes"
-          git push origin sha-cache
+      - name: 💾 Upload new SHA artifact
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: makefile-sha
+          path: |
+            sha_6.12.txt
+            sha_6.6.txt
 
       - name: 🚀 Trigger kernel build workflow
-        if: steps.compare.outputs.should_trigger_build == 'true'
+        if: steps.compare.outputs.changed == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: Compile the kernel
