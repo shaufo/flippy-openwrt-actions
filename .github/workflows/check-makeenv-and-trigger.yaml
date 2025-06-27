@@ -2,7 +2,7 @@ name: Check Makefile Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # 每两小时检查一次
+    - cron: '0 */2 * * *'
   workflow_dispatch:
 
 env:
@@ -19,10 +19,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🧾 Checkout main branch
+      - name: 📦 Checkout main branch
         uses: actions/checkout@v3
 
-      - name: 🔧 Set Git identity
+      - name: 🔧 Set global Git identity
         run: |
           git config --global user.email "github-actions@github.com"
           git config --global user.name "github-actions"
@@ -40,22 +40,29 @@ jobs:
           echo "✅ SHA 6.12: $(cat $SHA_FILE_612)"
           echo "✅ SHA 6.6 : $(cat $SHA_FILE_66)"
 
-      - name: 🧰 Init or Checkout `sha-cache` branch to temp dir
+      - name: 🧰 Init or checkout `sha-cache` branch to temp dir
         run: |
           mkdir -p "$SHA_CACHE_DIR"
-          git fetch origin sha-cache || echo "🆕 No remote sha-cache branch yet"
 
-          if git show-ref --quiet refs/heads/sha-cache; then
-            echo "🔁 Local sha-cache branch exists"
-          else
-            echo "🆕 Creating local sha-cache branch"
+          # 检查是否已有远程 sha-cache 分支
+          git ls-remote --exit-code --heads origin sha-cache
+          REMOTE_EXISTS=$?
+
+          if [ "$REMOTE_EXISTS" -ne 0 ]; then
+            echo "🆕 sha-cache branch not found remotely, creating..."
+            git switch --detach
             git checkout --orphan sha-cache
             git reset --hard
+            git config user.email "github-actions@github.com"
+            git config user.name "github-actions"
             git commit --allow-empty -m "Init sha-cache branch"
             git push origin sha-cache
+            git switch -
           fi
 
-          git worktree add "$SHA_CACHE_DIR" sha-cache
+          # 添加 worktree
+          git fetch origin sha-cache
+          git worktree add "$SHA_CACHE_DIR" origin/sha-cache
 
       - name: 🔍 Compare SHA values
         id: compare
@@ -76,7 +83,7 @@ jobs:
             echo "should_update_66=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: 💾 Update SHA cache (if needed)
+      - name: 💾 Update SHA cache
         if: steps.compare.outputs.should_trigger_build == 'true'
         run: |
           if [ "${{ steps.compare.outputs.should_update_612 }}" = "true" ]; then
