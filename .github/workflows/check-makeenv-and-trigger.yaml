@@ -2,7 +2,7 @@ name: Check Makefile Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 */2 * * *'  # 每两小时检查一次
   workflow_dispatch:
 
 env:
@@ -19,8 +19,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout current repository
+      - name: 🧾 Checkout main branch
         uses: actions/checkout@v3
+
+      - name: 🔧 Set Git identity
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
 
       - name: 📥 Download Makefiles
         run: |
@@ -35,12 +40,11 @@ jobs:
           echo "✅ SHA 6.12: $(cat $SHA_FILE_612)"
           echo "✅ SHA 6.6 : $(cat $SHA_FILE_66)"
 
-      - name: 🧰 Checkout or init `sha-cache` branch to temp dir
+      - name: 🧰 Init or Checkout `sha-cache` branch to temp dir
         run: |
           mkdir -p "$SHA_CACHE_DIR"
-          git fetch origin sha-cache || echo "🆕 No remote sha-cache branch"
+          git fetch origin sha-cache || echo "🆕 No remote sha-cache branch yet"
 
-          # Prepare local sha-cache branch if needed
           if git show-ref --quiet refs/heads/sha-cache; then
             echo "🔁 Local sha-cache branch exists"
           else
@@ -51,7 +55,6 @@ jobs:
             git push origin sha-cache
           fi
 
-          # Use worktree to isolate
           git worktree add "$SHA_CACHE_DIR" sha-cache
 
       - name: 🔍 Compare SHA values
@@ -84,10 +87,10 @@ jobs:
           fi
 
           cd "$SHA_CACHE_DIR"
-          git config user.name github-actions
-          git config user.email github-actions@github.com
+          git config user.email "github-actions@github.com"
+          git config user.name "github-actions"
           git add *.sha
-          git commit -m "Update SHA on $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || echo "No changes to commit"
+          git commit -m "Update SHA on $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || echo "No changes"
           git push origin sha-cache
 
       - name: 🚀 Trigger kernel build workflow
