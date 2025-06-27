@@ -15,11 +15,11 @@ jobs:
 
     steps:
       - name: 📥 Download previous SHA artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: makefile-sha
           path: ./prev-sha
-        continue-on-error: true  # 第一次运行可能无 artifact，忽略错误
+        continue-on-error: true
 
       - name: 📥 Download Makefiles
         run: |
@@ -54,7 +54,7 @@ jobs:
 
       - name: 💾 Upload new SHA artifact
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: makefile-sha
           path: |
