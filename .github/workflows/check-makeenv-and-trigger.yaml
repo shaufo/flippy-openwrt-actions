@@ -1,25 +1,14 @@
-name: Check Makefile Changes and Trigger Build
-
-on:
-  schedule:
-    - cron: '0 */2 * * *'
-  workflow_dispatch:
-
-env:
-  FILE_612_URL: https://raw.githubusercontent.com/unifreq/linux-6.12.y/main/Makefile
-  FILE_66_URL: https://raw.githubusercontent.com/unifreq/linux-6.6.y/main/Makefile
-
-jobs:
-  check-makefile:
-    runs-on: ubuntu-latest
-
-    steps:
       - name: 📥 Download previous SHA artifact
         uses: actions/download-artifact@v4
         with:
           name: makefile-sha
           path: ./prev-sha
         continue-on-error: true
+
+      - name: Debug artifact download directory
+        run: |
+          echo "Files in ./prev-sha:"
+          ls -l ./prev-sha || echo "No previous artifact downloaded"
 
       - name: 📥 Download Makefiles
         run: |
@@ -34,36 +23,47 @@ jobs:
           echo "New SHA 6.12: $(cat sha_6.12.txt)"
           echo "New SHA 6.6 : $(cat sha_6.6.txt)"
 
-          echo "Prev SHA 6.12: $(cat ./prev-sha/sha_6.12.txt || echo 'none')"
-          echo "Prev SHA 6.6 : $(cat ./prev-sha/sha_6.6.txt || echo 'none')"
+          if [ -f ./prev-sha/sha_6.12.txt ]; then
+            echo "Prev SHA 6.12: $(cat ./prev-sha/sha_6.12.txt)"
+          else
+            echo "Prev SHA 6.12: none"
+          fi
+
+          if [ -f ./prev-sha/sha_6.6.txt ]; then
+            echo "Prev SHA 6.6 : $(cat ./prev-sha/sha_6.6.txt)"
+          else
+            echo "Prev SHA 6.6 : none"
+          fi
 
       - name: 🔍 Compare SHA values
         id: compare
         run: |
           changed=false
-          if [ ! -f ./prev-sha/sha_6.12.txt ] || ! cmp -s sha_6.12.txt ./prev-sha/sha_6.12.txt; then
-            echo "6.12 changed"
+
+          if [ ! -f ./prev-sha/sha_6.12.txt ]; then
+            echo "No previous SHA 6.12 found -> treat as changed"
             changed=true
+          else
+            cmp -s sha_6.12.txt ./prev-sha/sha_6.12.txt
+            if [ $? -ne 0 ]; then
+              echo "SHA 6.12 differs"
+              changed=true
+            else
+              echo "SHA 6.12 same"
+            fi
           fi
-          if [ ! -f ./prev-sha/sha_6.6.txt ] || ! cmp -s sha_6.6.txt ./prev-sha/sha_6.6.txt; then
-            echo "6.6 changed"
+
+          if [ ! -f ./prev-sha/sha_6.6.txt ]; then
+            echo "No previous SHA 6.6 found -> treat as changed"
             changed=true
+          else
+            cmp -s sha_6.6.txt ./prev-sha/sha_6.6.txt
+            if [ $? -ne 0 ]; then
+              echo "SHA 6.6 differs"
+              changed=true
+            else
+              echo "SHA 6.6 same"
+            fi
           fi
 
           echo "changed=$changed" >> $GITHUB_OUTPUT
-
-      - name: 💾 Upload new SHA artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: makefile-sha
-          path: |
-            sha_6.12.txt
-            sha_6.6.txt
-
-      - name: 🚀 Trigger kernel build workflow
-        if: steps.compare.outputs.changed == 'true'
-        uses: benc-uk/workflow-dispatch@v1
-        with:
-          workflow: Compile the kernel
-          token: ${{ secrets.GITHUB_TOKEN }}
