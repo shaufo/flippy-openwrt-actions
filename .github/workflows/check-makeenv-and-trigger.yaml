@@ -1,4 +1,4 @@
-name: Check Makefile Changes and Trigger Build
+name: Check Makefile Changes and Trigger Build (Git Commit Cache)
 
 on:
   schedule:
@@ -12,26 +12,18 @@ env:
 jobs:
   check-makefile:
     runs-on: ubuntu-latest
-
     steps:
-      - name: 📥 Download previous SHA artifact
-        uses: actions/download-artifact@v4
+      - name: Checkout repository with full history
+        uses: actions/checkout@v3
         with:
-          name: makefile-sha
-          path: ./prev-sha
-        continue-on-error: true
+          fetch-depth: 0  # 需要完整历史方便提交和推送
 
-      - name: 🔎 Debug artifact download directory
-        run: |
-          echo "Files in ./prev-sha:"
-          ls -l ./prev-sha || echo "No previous artifact downloaded"
-
-      - name: 📥 Download Makefiles
+      - name: Download Makefiles
         run: |
           curl -fsSL "$FILE_612_URL" -o makefile_612
           curl -fsSL "$FILE_66_URL" -o makefile_66
 
-      - name: 🧮 Calculate SHA256 of downloaded Makefiles
+      - name: Calculate SHA256 of downloaded Makefiles
         run: |
           sha256sum makefile_612 | awk '{print $1}' > sha_6.12.txt
           sha256sum makefile_66 | awk '{print $1}' > sha_6.6.txt
@@ -39,52 +31,77 @@ jobs:
           echo "New SHA 6.12: $(cat sha_6.12.txt)"
           echo "New SHA 6.6 : $(cat sha_6.6.txt)"
 
-          echo "Prev SHA 6.12: $(cat ./prev-sha/sha_6.12.txt || echo 'none')"
-          echo "Prev SHA 6.6 : $(cat ./prev-sha/sha_6.6.txt || echo 'none')"
-
-      - name: 🔍 Compare SHA values
+      - name: Compare with committed SHA files
         id: compare
         run: |
           changed=false
 
-          if [ ! -f ./prev-sha/sha_6.12.txt ]; then
-            echo "No previous SHA 6.12 found -> treat as changed"
+          if ! cmp -s sha_6.12.txt sha_6.12.txt.orig 2>/dev/null; then
+            echo "SHA 6.12 changed"
             changed=true
           else
-            cmp -s sha_6.12.txt ./prev-sha/sha_6.12.txt
-            if [ $? -ne 0 ]; then
-              echo "SHA 6.12 differs"
-              changed=true
-            else
-              echo "SHA 6.12 same"
-            fi
+            echo "SHA 6.12 unchanged"
           fi
 
-          if [ ! -f ./prev-sha/sha_6.6.txt ]; then
-            echo "No previous SHA 6.6 found -> treat as changed"
+          if ! cmp -s sha_6.6.txt sha_6.6.txt.orig 2>/dev/null; then
+            echo "SHA 6.6 changed"
             changed=true
           else
-            cmp -s sha_6.6.txt ./prev-sha/sha_6.6.txt
-            if [ $? -ne 0 ]; then
-              echo "SHA 6.6 differs"
-              changed=true
-            else
-              echo "SHA 6.6 same"
-            fi
+            echo "SHA 6.6 unchanged"
+          fi
+
+          echo "changed=$changed" >> $GITHUB_OUTPUT
+        # 这里先备份原文件，供对比
+        # 先复制仓库里已有 sha 文件到 .orig 方便比较
+      - name: Prepare original SHA files for comparison
+        run: |
+          cp sha_6.12.txt sha_6.12.txt.orig || true
+          cp sha_6.6.txt sha_6.6.txt.orig || true
+
+      # 改成先备份后比较：
+      - name: Compare SHA files (run after Prepare)
+        id: compare
+        run: |
+          changed=false
+
+          if ! cmp -s sha_6.12.txt sha_6.12.txt.orig 2>/dev/null; then
+            echo "SHA 6.12 changed"
+            changed=true
+          else
+            echo "SHA 6.12 unchanged"
+          fi
+
+          if ! cmp -s sha_6.6.txt sha_6.6.txt.orig 2>/dev/null; then
+            echo "SHA 6.6 changed"
+            changed=true
+          else
+            echo "SHA 6.6 unchanged"
           fi
 
           echo "changed=$changed" >> $GITHUB_OUTPUT
 
-      - name: 💾 Upload new SHA artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: makefile-sha
-          path: |
-            sha_6.12.txt
-            sha_6.6.txt
+      - name: Update SHA files and commit if changed
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          mv sha_6.12.txt sha_6.12.txt.orig || true
+          mv sha_6.6.txt sha_6.6.txt.orig || true
 
-      - name: 🚀 Trigger kernel build workflow
+          # 把新计算的 SHA 覆盖到仓库对应文件
+          mv sha_6.12.txt sha_6.12.txt.tmp
+          mv sha_6.6.txt sha_6.6.txt.tmp
+          mv sha_6.12.txt.tmp sha_6.12.txt
+          mv sha_6.6.txt.tmp sha_6.6.txt
+
+          git config user.email "github-actions@github.com"
+          git config user.name "github-actions"
+
+          git add sha_6.12.txt sha_6.6.txt
+
+          git commit -m "Update SHA files on $(date -u +"%Y-%m-%d %H:%M:%S UTC")" || echo "No changes to commit"
+
+          git push
+
+      - name: Trigger kernel build workflow
         if: steps.compare.outputs.changed == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
