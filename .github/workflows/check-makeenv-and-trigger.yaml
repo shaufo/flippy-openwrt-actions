@@ -2,12 +2,11 @@ name: Check Makefile Changes and Trigger Build
 
 on:
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 */2 * * *'  # 每 2 小时执行一次
   workflow_dispatch:
 
 env:
   FILE_612_URL: https://raw.githubusercontent.com/unifreq/linux-6.12.y/main/Makefile
-  FILE_66_URL: https://raw.githubusercontent.com/unifreq/linux-6.6.y/main/Makefile
 
 jobs:
   check-makefile:
@@ -18,64 +17,45 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download Makefiles
+      - name: Load original SHA from repo
+        run: |
+          cp sha_6.12.txt sha_6.12.txt.orig || touch sha_6.12.txt.orig
+
+      - name: Download Makefile 6.12
         run: |
           curl -fsSL "$FILE_612_URL" -o makefile_612
-          curl -fsSL "$FILE_66_URL" -o makefile_66
 
-      - name: Calculate SHA256 of downloaded Makefiles
+      - name: Calculate SHA256 of downloaded Makefile 6.12
         run: |
           sha256sum makefile_612 | awk '{print $1}' > sha_6.12.txt
-          sha256sum makefile_66 | awk '{print $1}' > sha_6.6.txt
           echo "New SHA 6.12: $(cat sha_6.12.txt)"
-          echo "New SHA 6.6 : $(cat sha_6.6.txt)"
 
-      - name: Prepare original SHA files for comparison
-        run: |
-          cp sha_6.12.txt sha_6.12.txt.orig || true
-          cp sha_6.6.txt sha_6.6.txt.orig || true
-
-      - name: Compare SHA files
-        id: compare_orig
+      - name: Compare SHA file
+        id: compare
         run: |
           changed=false
 
-          if ! cmp -s sha_6.12.txt sha_6.12.txt.orig 2>/dev/null; then
+          if ! cmp -s sha_6.12.txt sha_6.12.txt.orig; then
             echo "SHA 6.12 changed"
             changed=true
           else
             echo "SHA 6.12 unchanged"
           fi
 
-          if ! cmp -s sha_6.6.txt sha_6.6.txt.orig 2>/dev/null; then
-            echo "SHA 6.6 changed"
-            changed=true
-          else
-            echo "SHA 6.6 unchanged"
-          fi
+          echo "changed=${changed}" >> "$GITHUB_ENV"
 
-          echo "changed=$changed" >> $GITHUB_OUTPUT
-
-      - name: Update SHA files and commit if changed
-        if: steps.compare_orig.outputs.changed == 'true'
+      - name: Commit and push updated SHA file if changed
+        if: env.changed == 'true'
         run: |
-          # 用最新计算结果覆盖仓库文件
-          mv sha_6.12.txt sha_6.12.txt.tmp
-          mv sha_6.6.txt sha_6.6.txt.tmp
-          mv sha_6.12.txt.tmp sha_6.12.txt
-          mv sha_6.6.txt.tmp sha_6.6.txt
-
           git config user.email "github-actions@github.com"
           git config user.name "github-actions"
 
-          git add sha_6.12.txt sha_6.6.txt
-
-          git commit -m "Update SHA files on $(date -u +"%Y-%m-%d %H:%M:%S UTC")" || echo "No changes to commit"
-
+          git add sha_6.12.txt
+          git commit -m "Update SHA 6.12 on $(date -u +"%Y-%m-%d %H:%M:%S UTC")" || echo "No changes to commit"
           git push
 
       - name: Trigger kernel build workflow
-        if: steps.compare_orig.outputs.changed == 'true'
+        if: env.changed == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
           workflow: Compile the kernel
